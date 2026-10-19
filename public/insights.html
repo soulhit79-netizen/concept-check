@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concept Check - Insights & Metrics</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .insights-container {
+      max-width: 1000px;
+      margin: 2rem auto;
+      padding: 0 1.25rem;
+    }
+    .panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .panel-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    .grid-2col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 768px) {
+      .grid-2col {
+        grid-template-columns: 1fr;
+      }
+    }
+    .review-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      margin-bottom: 0.85rem;
+      background: #fafcff;
+    }
+    .review-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      font-family: var(--font-mono);
+    }
+    .review-quote {
+      font-style: italic;
+      color: #92400e;
+      background: #fffbeb;
+      padding: 0.4rem 0.65rem;
+      border-left: 3px solid #f59e0b;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      margin-bottom: 0.5rem;
+    }
+    .review-question {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--brand);
+      margin-bottom: 0.35rem;
+    }
+    .review-outcome {
+      font-size: 0.9rem;
+      color: var(--text-main);
+      background: white;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 2rem;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="header-container" style="max-width: 1000px;">
+      <a href="index.html" class="logo-group">
+        <div class="logo-icon">C</div>
+        <span class="logo-title">Concept Check &bull; Insights</span>
+      </a>
+      <div class="header-meta">
+        <a href="index.html" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">&larr; Back to Practice</a>
+        <button id="btn-refresh" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;">Refresh Data</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="insights-container">
+    <h1>Project Metrics & Transfer Evidence</h1>
+    <p class="subtitle">Real-time aggregate data queried strictly via SQL. No learner names or personal identifiers are stored.</p>
+
+    <!-- Top KPI Cards -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Total Learners</div>
+        <div id="stat-learners" class="metric-value">-</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Total Attempts</div>
+        <div id="stat-attempts" class="metric-value">-</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Overall Pass Rate</div>
+        <div id="stat-pass-rate" class="metric-value">-</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Gaps Closed (Transfer)</div>
+        <div id="stat-gaps-closed" class="metric-value" style="color: var(--success);">-</div>
+      </div>
+    </div>
+
+    <!-- 1. Gaps Closed Explanation Card -->
+    <div class="case-box" style="margin-bottom: 2rem; border-left-color: var(--success);">
+      <strong>Core Project Proof (Gaps Closed):</strong>
+      <p style="margin-top: 0.35rem; font-size: 0.9rem;">
+        A gap is closed when a learner fails Case 1 (before), receives the targeted single follow-up on their recited phrase, and then <strong>passes Case 2 on a completely different theme</strong>.
+      </p>
+    </div>
+
+    <!-- 2. Attempts Per Learner Code -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">1. Attempts per Learner Code</h2>
+      </div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Learner Code</th>
+              <th>Group</th>
+              <th>Total Attempts</th>
+              <th>Passed</th>
+              <th>Failed</th>
+              <th>Success Rate</th>
+            </tr>
+          </thead>
+          <tbody id="table-learners">
+            <tr><td colspan="6" class="empty-state">Loading learner stats...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Concept Filter Control -->
+    <div class="panel" style="padding: 1.15rem 1.25rem; margin-bottom: 1.5rem; background: #ffffff;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+        <div>
+          <label for="filter-idea-select" style="margin-bottom: 0.2rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">Filter by Concept Idea:</label>
+          <div style="font-size: 0.85rem; color: var(--text-muted);">Filters Case Pass Rates and Missed Key Points tables below</div>
+        </div>
+        <select id="filter-idea-select" style="max-width: 420px; font-weight: 600;">
+          <option value="">All Concepts (All 7 Ideas)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 3. Pass Rate per Case -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">2. Pass Rate per Case Scenario</h2>
+      </div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Theme</th>
+              <th>Concept Idea</th>
+              <th>Total Attempts</th>
+              <th>Passed</th>
+              <th>Pass Rate</th>
+            </tr>
+          </thead>
+          <tbody id="table-cases">
+            <tr><td colspan="6" class="empty-state">Loading case performance...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 4. Most Missed Key Points -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">3. Key Points Missed Most Frequently</h2>
+      </div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Case Theme</th>
+              <th>Required Key Point</th>
+              <th>Total Checks</th>
+              <th>Missed Count</th>
+              <th>Miss Rate</th>
+            </tr>
+          </thead>
+          <tbody id="table-keypoints">
+            <tr><td colspan="5" class="empty-state">Loading key point data...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 5. Recitation Breakdown -->
+    <div class="grid-2col">
+      <!-- Most Common Recited Sentences -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">4. Most Common Recited Phrases</h2>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Sentence Quoted</th>
+                <th>Type</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody id="table-recited-sentences">
+              <tr><td colspan="3" class="empty-state">No recitation data recorded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Recitation by Type -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Recitation Categories</h2>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Count</th>
+                <th>Share</th>
+              </tr>
+            </thead>
+            <tbody id="table-recited-types">
+              <tr><td colspan="3" class="empty-state">No data yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. Learner Follow-up Outcome Reviews -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">5. Learner Follow-up Reflections (Qualitative Review)</h2>
+      </div>
+      <div id="followup-list">
+        <div class="empty-state">No follow-up responses recorded yet.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    Concept Check Insights &bull; Powered by SQLite SQL &bull; Module 2
+  </footer>
+
+  <script src="insights.js"></script>
+</body>
+</html>

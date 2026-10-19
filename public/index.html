@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concept Check</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header>
+    <div class="header-container">
+      <a href="index.html" class="logo-group">
+        <div class="logo-icon">C</div>
+        <span class="logo-title">Concept Check</span>
+      </a>
+      <div class="header-meta">
+        <div id="status-banner" class="status-banner">
+          <span id="db-status-pill" class="status-pill status-loading" title="Database status">DB: checking...</span>
+          <span id="llm-status-pill" class="status-pill status-loading" title="LLM status">LLM: checking...</span>
+        </div>
+        <span id="learner-badge" class="learner-badge" style="display: none;"></span>
+        <a href="insights.html" class="nav-link">Insights &rarr;</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Learner Flow Container -->
+  <main>
+    <!-- Central Error Alert -->
+    <div id="error-banner" class="error-banner hidden">
+      <span id="error-message"></span>
+      <button id="close-error-btn" class="close-btn" aria-label="Dismiss error">&times;</button>
+    </div>
+
+    <!-- Screen 1: Consent Screen -->
+    <section id="screen-consent" class="screen active">
+      <h1>Welcome to Concept Check</h1>
+      <p class="subtitle">A deliberate practice tool for deep software architecture concepts.</p>
+      
+      <div class="case-box" style="margin-bottom: 1.5rem;">
+        <p style="margin-bottom: 0.5rem;"><strong>How this works:</strong></p>
+        <p style="margin-bottom: 0.5rem;">1. You explain a core software idea in your own words.</p>
+        <p style="margin-bottom: 0.5rem;">2. You test your mental model against realistic scenarios.</p>
+        <p>3. <strong>Code decides pass/fail</strong> against an objective answer key — never an AI's arbitrary opinion.</p>
+      </div>
+
+      <div class="form-group">
+        <label for="tester-type-select">Tester Group (Optional)</label>
+        <select id="tester-type-select">
+          <option value="classmate">Classmate</option>
+          <option value="stranger">Stranger / Independent</option>
+          <option value="educator">Educator / Reviewer</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-top: 1.25rem;">
+        <label class="checkbox-label">
+          <input type="checkbox" id="consent-checkbox">
+          <span>I understand that my explanations and case responses are recorded anonymously without names or personal data.</span>
+        </label>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-start-consent" class="btn btn-primary" disabled>Begin Session</button>
+      </div>
+    </section>
+
+    <!-- Screen 2: Idea Selection Screen -->
+    <section id="screen-ideas" class="screen">
+      <span class="step-pill">Module 2</span>
+      <h1>Pick a Concept to Check</h1>
+      <p class="subtitle">Choose an architecture concept to explain and test:</p>
+
+      <div id="ideas-container" class="idea-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- Screen 3: Explanation Screen -->
+    <section id="screen-explain" class="screen">
+      <span class="step-pill">Step 1: Your Explanation</span>
+      <h2 id="explain-idea-title">Concept Title</h2>
+      <p class="subtitle">Explain this in your own words, as if to someone who has never built an app.</p>
+
+      <div class="form-group">
+        <label for="explanation-input">Your explanation:</label>
+        <textarea id="explanation-input" placeholder="Explain the underlying cause-and-effect mechanism. Avoid reciting buzzwords or slogans..."></textarea>
+      </div>
+
+      <div id="explain-loading" class="loading-indicator" style="display: none;">
+        <div class="spinner"></div>
+        <span>Analyzing explanation mechanisms and preparing your first case...</span>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-submit-explanation" class="btn btn-primary">Submit Explanation</button>
+        <button id="btn-back-to-ideas" class="btn btn-secondary">Back to Ideas</button>
+      </div>
+    </section>
+
+    <!-- Screen 4: Case 1 ("Before") -->
+    <section id="screen-case1" class="screen">
+      <span class="step-pill">Step 2: Case 1 (Before)</span>
+      <div id="case1-theme-pill" class="theme-pill">Theme</div>
+      
+      <h2>Analyze This Scenario</h2>
+      <div id="case1-prompt" class="case-box">Case prompt text</div>
+
+      <div class="form-group">
+        <label for="case1-answer">Your answer:</label>
+        <textarea id="case1-answer" placeholder="State what happens and the concrete mechanism behind it..."></textarea>
+      </div>
+
+      <div id="case1-loading" class="loading-indicator" style="display: none;">
+        <div class="spinner"></div>
+        <span>Evaluating key points against the case criteria...</span>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-submit-case1" class="btn btn-primary">Submit Answer</button>
+      </div>
+    </section>
+
+    <!-- Screen 5: Case 1 Passed ("No Gap Found") -->
+    <section id="screen-case1-passed" class="screen">
+      <div class="result-banner pass" style="margin-bottom: 1rem;">
+        Case 1 passed. No gap found on this one.
+      </div>
+      <p class="subtitle">You clearly stated the core mechanisms on your first attempt.</p>
+
+      <h3>Key Points Verified:</h3>
+      <div id="case1-passed-keypoints" class="key-points-list"></div>
+
+      <div class="btn-group">
+        <button id="btn-challenge-case" class="btn btn-primary">Try a Challenge Case (Different Theme)</button>
+        <button id="btn-pass-another-idea" class="btn btn-secondary">Try Another Idea</button>
+      </div>
+    </section>
+
+    <!-- Screen 6: Follow-up Screen (When Case 1 Failed) -->
+    <section id="screen-followup" class="screen">
+      <span class="step-pill">Reflection & Follow-up</span>
+      <h2>Notice Where Reasoning Shifted</h2>
+      <p class="subtitle">In your initial explanation, you relied on a phrase or assumption:</p>
+
+      <div id="recited-container" class="recited-box">
+        <div class="label">Sentence from your explanation:</div>
+        <div id="recited-quote" class="recited-quote">"..."</div>
+        <div id="hidden-assumption" class="hidden-assumption"></div>
+      </div>
+
+      <div class="followup-question-box">
+        <h3>One Follow-up Question</h3>
+        <div id="followup-question-text" class="followup-question-text">What happens step by step?</div>
+      </div>
+
+      <div class="form-group">
+        <label for="followup-answer">Your reflection (what breaks or happens step by step):</label>
+        <textarea id="followup-answer" placeholder="Explain what actually breaks step by step..."></textarea>
+      </div>
+
+      <div id="followup-loading" class="loading-indicator" style="display: none;">
+        <div class="spinner"></div>
+        <span>Recording your reflection and preparing Case 2...</span>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-submit-followup" class="btn btn-primary">Continue to Case 2</button>
+      </div>
+    </section>
+
+    <!-- Screen 7: Case 2 ("After Follow-up") -->
+    <section id="screen-case2" class="screen">
+      <span class="step-pill">Step 3: Case 2 (After Follow-up)</span>
+      <div id="case2-theme-pill" class="theme-pill">Theme</div>
+
+      <h2>Try a Fresh Scenario</h2>
+      <p class="subtitle">This is a different scenario from a different theme that you have not seen yet.</p>
+      
+      <div id="case2-prompt" class="case-box">Case prompt text</div>
+
+      <div class="form-group">
+        <label for="case2-answer">Your answer:</label>
+        <textarea id="case2-answer" placeholder="Apply your mechanical reasoning here..."></textarea>
+      </div>
+
+      <div id="case2-loading" class="loading-indicator" style="display: none;">
+        <div class="spinner"></div>
+        <span>Evaluating key points against the case criteria...</span>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-submit-case2" class="btn btn-primary">Submit Answer</button>
+      </div>
+    </section>
+
+    <!-- Screen 8: Result Screen -->
+    <section id="screen-result" class="screen">
+      <div id="result-banner" class="result-banner">
+        <!-- "You passed a case you had not seen after the follow-up" or "Not yet" -->
+      </div>
+
+      <h3 style="margin-top: 1.5rem;">Key points: marked by the AI against the answer key, pass/fail decided by code</h3>
+      <p class="subtitle">Each key point requires explicit statement in your answer. Vague assertions do not count.</p>
+      <div id="result-keypoints" class="key-points-list"></div>
+
+      <div class="btn-group">
+        <button id="btn-result-another-idea" class="btn btn-primary">Try Another Idea</button>
+        <a href="insights.html" class="btn btn-secondary">View Insights & Metrics</a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Concept Check &bull; Objective conceptual verification &bull; Module 2
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
