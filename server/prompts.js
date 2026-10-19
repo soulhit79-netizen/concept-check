@@ -74,7 +74,7 @@ Strict Evaluation Rules:
 3. Vague answers, superficial slogans, or mere value judgments (such as "it's insecure", "bad things happen", "for security reasons", "not recommended", "best practice", "it won't work", "they can hack it", "it's more secure that way", "by using a different account", "it keeps a record", "it's about storage") are strictly NOT present (false).
 4. Do NOT guess or assume what the learner "meant". If it is not clearly stated, mark present: false.
 5. Do NOT answer whether the learner "understands". Do NOT be lenient or generous.
-6. When present is true, "evidence" must be a short verbatim quote from the learner's answer demonstrating the point.
+6. When present is true, "evidence" must be a short verbatim quote from the learner's answer demonstrating the point. Each "evidence" quote must be 15 words or fewer so the JSON never gets cut off.
 7. When present is false, "evidence" must be an empty string ("").
 8. Do not generate hints or conversational advice.
 
@@ -83,7 +83,7 @@ The JSON object must have a single key "key_points" containing an array of objec
 Each object must contain exactly:
 - "key_point_id" (integer matching the required key point ID)
 - "present" (boolean: true or false)
-- "evidence" (string: short quote from learner's answer, or "")
+- "evidence" (string: verbatim quote of 15 words or fewer from learner's answer, or "")
 
 Tiny example JSON object:
 {

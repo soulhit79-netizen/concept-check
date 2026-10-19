@@ -95,18 +95,30 @@ app.post('/api/learners', async (req, res, next) => {
     }
 
     const pool = getPool();
-    // Generate auto code like L-001, L-014
-    const maxRes = await pool.query('SELECT COALESCE(MAX(id), 0) as max_id FROM learners');
-    const nextNum = Number(maxRes.rows[0].max_id) + 1;
-    const code = `L-${String(nextNum).padStart(3, '0')}`;
+    let insertedLearner = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const maxRes = await pool.query('SELECT COALESCE(MAX(id), 0) as max_id FROM learners');
+        const nextNum = Number(maxRes.rows[0].max_id) + 1 + attempt;
+        const code = `L-${String(nextNum).padStart(3, '0')}`;
 
-    const insertRes = await pool.query(`
-      INSERT INTO learners (code, consent, tester_type)
-      VALUES ($1, $2, $3)
-      RETURNING *
-    `, [code, Boolean(consent), tester_type || 'classmate']);
+        const insertRes = await pool.query(`
+          INSERT INTO learners (code, consent, tester_type)
+          VALUES ($1, $2, $3)
+          RETURNING *
+        `, [code, Boolean(consent), tester_type || 'classmate']);
+        insertedLearner = insertRes.rows[0];
+        break;
+      } catch (insertErr) {
+        if (insertErr.code === '23505' && attempt < 4) {
+          await new Promise(r => setTimeout(r, 25 * (attempt + 1)));
+          continue;
+        }
+        throw insertErr;
+      }
+    }
 
-    res.status(201).json(insertRes.rows[0]);
+    res.status(201).json(insertedLearner);
   } catch (err) {
     next(err);
   }
@@ -197,8 +209,9 @@ app.post('/api/explanations', async (req, res, next) => {
     try {
       analysis = await findRecitedSentence(idea.title, text.trim());
     } catch (llmErr) {
-      return res.status(502).json({
-        error: `LLM evaluation error: ${llmErr.message}`
+      console.error('[Server Error in /api/explanations Job A]:', llmErr);
+      return res.status(503).json({
+        error: "The AI tutor is busy right now. Please wait a moment and try again."
       });
     }
 
@@ -268,8 +281,9 @@ app.post('/api/attempts', async (req, res, next) => {
         caseData.key_points
       );
     } catch (llmErr) {
-      return res.status(502).json({
-        error: `LLM evaluation error: ${llmErr.message}`
+      console.error('[Server Error in /api/attempts Job B]:', llmErr);
+      return res.status(503).json({
+        error: "The AI tutor is busy right now. Please wait a moment and try again."
       });
     }
 
@@ -337,8 +351,9 @@ app.post('/api/attempts', async (req, res, next) => {
 
           gapInfo.followup_question = followupResult.followup_question;
         } catch (jobCErr) {
-          return res.status(502).json({
-            error: `Follow-up generation error: ${jobCErr.message}`
+          console.error('[Server Error in /api/attempts Job C]:', jobCErr);
+          return res.status(503).json({
+            error: "The AI tutor is busy right now. Please wait a moment and try again."
           });
         }
       }
@@ -585,6 +600,11 @@ app.get('/api/insights', async (req, res, next) => {
 // Generic centralized error handler
 app.use((err, req, res, next) => {
   console.error('[Server Error]', err);
+  if (err.isFriendlyBusy) {
+    return res.status(503).json({
+      error: "The AI tutor is busy right now. Please wait a moment and try again."
+    });
+  }
   res.status(err.status || 500).json({
     error: err.message || 'An unexpected internal server error occurred.'
   });

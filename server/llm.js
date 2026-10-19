@@ -1,9 +1,23 @@
-// server/llm.js - Groq SDK integration with JSON mode, strict shape validation, and retry
+// server/llm.js - Groq SDK integration with token budgeting, concurrency queue, and resilient error handling
 require('dotenv').config();
 const Groq = require('groq-sdk');
 const { buildRecitedSentencePrompt, buildKeyPointsPrompt, buildFollowupPrompt } = require('./prompts');
 
 const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
+const FRIENDLY_BUSY_MESSAGE = "The AI tutor is busy right now. Please wait a moment and try again.";
+
+/**
+ * Custom error class for user-facing friendly busy errors.
+ * Never exposes raw provider errors to the browser.
+ */
+class FriendlyBusyError extends Error {
+  constructor(message = FRIENDLY_BUSY_MESSAGE) {
+    super(message);
+    this.name = 'FriendlyBusyError';
+    this.isFriendlyBusy = true;
+    this.status = 503;
+  }
+}
 
 /**
  * Check if a real Groq API key is configured.
@@ -14,31 +28,137 @@ function hasValidApiKey() {
 }
 
 /**
- * Format Groq API errors into user-friendly messages for the UI.
- * Handles missing key, 401 invalid key, 429 rate limit, and model-not-found.
+ * Check if error indicates a single request exceeded the model's token/OTPM limit.
+ */
+function isRequestTooLargeError(err) {
+  if (!err) return false;
+  const msg = ((err.message || '') + ' ' + (err.error?.message || '')).toLowerCase();
+  return msg.includes('request too large') ||
+         msg.includes('reduce max_tokens') ||
+         (msg.includes('limit') && msg.includes('requested') && msg.includes('tokens'));
+}
+
+/**
+ * Check if error is a normal 429 rate limit (excluding single request too large).
+ */
+function isNormalRateLimit429(err) {
+  if (!err) return false;
+  if (isRequestTooLargeError(err)) return false;
+  const msg = ((err.message || '') + ' ' + (err.error?.message || '')).toLowerCase();
+  const status = err.status || (err.response && err.response.status);
+  return status === 429 || msg.includes('429') || msg.includes('rate limit') || msg.includes('rate_limit_exceeded');
+}
+
+/**
+ * Parse retry-after wait duration in milliseconds from header or error message.
+ */
+function parseRetryAfter(err) {
+  const header = err?.headers?.['retry-after'] || (err?.response && err.response.headers && err.response.headers.get && err.response.headers.get('retry-after'));
+  if (header) {
+    const sec = parseFloat(header);
+    if (!isNaN(sec) && sec > 0) return Math.ceil(sec * 1000) + 200;
+  }
+  const msg = (err?.message || '') + ' ' + (err?.error?.message || '');
+  const match = msg.match(/try again in (\d+(\.\d+)?)s/i) || msg.match(/wait (\d+(\.\d+)?)s/i);
+  if (match) {
+    const sec = parseFloat(match[1]);
+    if (!isNaN(sec) && sec > 0) return Math.ceil(sec * 1000) + 200;
+  }
+  return 3000;
+}
+
+/**
+ * Token budget tracker and concurrency queue:
+ * - Keeps concurrency at 2 or lower.
+ * - Keeps rolling 60-second tally of completion tokens used.
+ * - Waits in queue before dispatching if tally + job's max_tokens > OTPM limit.
+ */
+class TokenBudgetQueue {
+  constructor() {
+    this.history = []; // Array of { timestamp: number, tokens: number }
+    this.activeCount = 0;
+    this.maxConcurrency = 2;
+    this.waitQueue = [];
+    this._timer = null;
+  }
+
+  getLimit() {
+    const lim = parseInt(process.env.LLM_OTPM_LIMIT, 10);
+    return !isNaN(lim) && lim > 0 ? lim : 900;
+  }
+
+  getTally() {
+    const now = Date.now();
+    const cutoff = now - 60000;
+    this.history = this.history.filter(item => item.timestamp > cutoff);
+    return this.history.reduce((sum, item) => sum + item.tokens, 0);
+  }
+
+  recordUsage(tokens) {
+    const count = Number(tokens) || 0;
+    if (count > 0) {
+      this.history.push({ timestamp: Date.now(), tokens: count });
+    }
+    this.processQueue();
+  }
+
+  acquire(estimatedMaxTokens) {
+    return new Promise((resolve) => {
+      this.waitQueue.push({
+        maxTokens: Number(estimatedMaxTokens) || 200,
+        startTime: Date.now(),
+        resolve
+      });
+      this.processQueue();
+    });
+  }
+
+  processQueue() {
+    if (this._timer) {
+      clearTimeout(this._timer);
+      this._timer = null;
+    }
+
+    if (this.waitQueue.length === 0) return;
+    if (this.activeCount >= this.maxConcurrency) return;
+
+    const limit = this.getLimit();
+    const tally = this.getTally();
+    const nextItem = this.waitQueue[0];
+    const needed = Math.min(nextItem.maxTokens, limit);
+
+    if (tally + needed <= limit) {
+      this.waitQueue.shift();
+      this.activeCount++;
+      const waitTime = Date.now() - nextItem.startTime;
+      nextItem.resolve(waitTime);
+      // Immediately check if another request in queue can also proceed
+      this.processQueue();
+    } else {
+      const now = Date.now();
+      const oldest = this.history[0];
+      const delay = oldest ? Math.max(50, (oldest.timestamp + 60000) - now + 50) : 500;
+      this._timer = setTimeout(() => this.processQueue(), delay);
+    }
+  }
+
+  release() {
+    this.activeCount = Math.max(0, this.activeCount - 1);
+    this.processQueue();
+  }
+}
+
+const budgetQueue = new TokenBudgetQueue();
+
+/**
+ * Format Groq API errors for logging.
  */
 function formatGroqError(err) {
   if (!hasValidApiKey()) {
-    return new Error('Groq API key is missing. Please set GROQ_API_KEY in .env (get a free key at https://console.groq.com).');
+    return new Error('Groq API key is missing. Please set GROQ_API_KEY in .env.');
   }
-
   const msg = err.message || '';
-  const status = err.status || (err.response && err.response.status);
-
-  if (status === 401 || msg.includes('401') || msg.toLowerCase().includes('invalid api key')) {
-    return new Error('Invalid Groq API key (401). Please check your GROQ_API_KEY in .env.');
-  }
-
-  if (status === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('rate_limit_exceeded')) {
-    return new Error('Groq rate limit exceeded (429). Please wait a few seconds and retry.');
-  }
-
-  if (status === 404 || msg.includes('404') || msg.toLowerCase().includes('model_not_found') || msg.toLowerCase().includes('model not found') || msg.toLowerCase().includes('does not exist')) {
-    const currentModel = process.env.LLM_MODEL || DEFAULT_MODEL;
-    return new Error(`Groq model not found ("${currentModel}"). Please check your model name in .env against https://console.groq.com/docs/models.`);
-  }
-
-  return new Error(`Groq error: ${msg}`);
+  return new Error(`Groq provider error: ${msg}`);
 }
 
 /**
@@ -71,7 +191,6 @@ function cleanAndParseJson(rawText) {
 
 /**
  * Validate shape and types for Job A (Recited sentence analysis).
- * Expected keys: recited_sentence, type, hidden_assumption.
  */
 function validateRecitedSentenceOutput(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -149,7 +268,6 @@ function validateKeyPointsOutput(data, expectedKeyPoints) {
 
 /**
  * Validate shape and types for Job C (Follow-up question writing).
- * Output must be a JSON object with a non-empty followup_question string.
  */
 function validateFollowupOutput(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -166,62 +284,202 @@ function validateFollowupOutput(data) {
 }
 
 /**
- * Call Groq chat.completions.create with JSON mode and 1-shot retry on validation error.
+ * Execute a single HTTP call to Groq via the SDK within the budget queue.
  */
-async function callGroqWithValidation({ systemPrompt, userPrompt, temperature, validator, retryHint }) {
+async function performGroqCall({
+  jobName,
+  groq,
+  systemPrompt,
+  userPrompt,
+  temperature,
+  maxTokens,
+  model
+}) {
+  const waitTime = await budgetQueue.acquire(maxTokens);
+  let completionTokens = 0;
+
+  try {
+    const callParams = {
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      model: model,
+      temperature: temperature,
+      response_format: { type: 'json_object' },
+      max_tokens: maxTokens
+    };
+
+    // If LLM_REASONING_EFFORT is set (e.g. "none"), pass it.
+    // If empty or unset, do NOT send the field at all.
+    const reasoningEffort = process.env.LLM_REASONING_EFFORT ? process.env.LLM_REASONING_EFFORT.trim() : '';
+    if (reasoningEffort) {
+      callParams.reasoning_effort = reasoningEffort;
+    }
+
+    const completion = await groq.chat.completions.create(callParams);
+
+    completionTokens = (completion.usage && completion.usage.completion_tokens) || 0;
+    budgetQueue.recordUsage(completionTokens);
+
+    // Print log line per call: job, model, completion tokens used, tally for the last 60 seconds, and wait time
+    console.log(`[LLM Call] job: ${jobName} | model: ${model} | completion_tokens: ${completionTokens} | 60s_tally: ${budgetQueue.getTally()}/${budgetQueue.getLimit()} | wait_time: ${waitTime}ms`);
+
+    const choice = completion.choices && completion.choices[0];
+    const finishReason = choice && choice.finish_reason;
+    const content = choice && choice.message && choice.message.content;
+
+    return {
+      content,
+      finishReason,
+      isTruncated: finishReason === 'length',
+      completionTokens
+    };
+  } catch (err) {
+    budgetQueue.recordUsage(0);
+    throw err;
+  } finally {
+    budgetQueue.release();
+  }
+}
+
+/**
+ * Call Groq with:
+ * - Token budget & concurrency rate limiting (max 2 concurrency, rolling 60s tally).
+ * - Explicit max_tokens per job.
+ * - Reasoning effort handling.
+ * - Distinct handling for "Request too large" vs normal 429 rate limits.
+ * - Retry once with higher max_tokens (up to 600) on finish_reason: length or JSON parse/validation error.
+ * - Friendly busy message on unrecoverable failures.
+ */
+async function callGroqWithValidation({
+  jobName,
+  systemPrompt,
+  userPrompt,
+  temperature,
+  validator,
+  defaultMaxTokens,
+  envMaxTokensKey,
+  retryHint
+}) {
   if (!hasValidApiKey()) {
-    console.warn('[LLM] No active GROQ_API_KEY found in .env. Using built-in conceptual evaluator fallback.');
+    console.warn(`[LLM] No active GROQ_API_KEY found in .env. Using built-in conceptual evaluator fallback for ${jobName}.`);
     return null;
   }
 
-  const groq = new Groq({
-    apiKey: process.env.GROQ_API_KEY
-  });
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  const configuredMax = parseInt(process.env[envMaxTokensKey], 10);
+  const initialMaxTokens = (!isNaN(configuredMax) && configuredMax > 0) ? configuredMax : defaultMaxTokens;
+  const initialModel = process.env.LLM_MODEL || DEFAULT_MODEL;
 
-  const model = process.env.LLM_MODEL || DEFAULT_MODEL;
-
-  async function executeCall(promptText) {
-    let completion;
+  async function executeWithRetryHandling(promptText, maxTokens, model) {
     try {
-      completion = await groq.chat.completions.create({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: promptText }
-        ],
-        model: model,
-        temperature: temperature,
-        response_format: { type: 'json_object' }
+      return await performGroqCall({
+        jobName,
+        groq,
+        systemPrompt,
+        userPrompt: promptText,
+        temperature,
+        maxTokens,
+        model
       });
     } catch (apiErr) {
-      throw formatGroqError(apiErr);
-    }
+      // 1. "Request too large" or single request exceeding OTPM limit:
+      // Do not retry the same request. Log server message and try LLM_FALLBACK_MODEL if set.
+      if (isRequestTooLargeError(apiErr)) {
+        console.error(`[Groq] max_tokens exceeds the model's per-minute limit: ${apiErr.message}`);
+        const fallbackModel = process.env.LLM_FALLBACK_MODEL && process.env.LLM_FALLBACK_MODEL.trim();
+        if (fallbackModel && fallbackModel !== model) {
+          console.warn(`[Groq] Falling back to LLM_FALLBACK_MODEL: ${fallbackModel}`);
+          return await performGroqCall({
+            jobName,
+            groq,
+            systemPrompt,
+            userPrompt: promptText,
+            temperature,
+            maxTokens,
+            model: fallbackModel
+          });
+        }
+        throw new FriendlyBusyError();
+      }
 
-    const content = completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content;
-    if (!content) {
-      throw new Error('Groq returned empty response content.');
-    }
+      // 2. Normal per-minute 429: wait for retry-after and retry once
+      if (isNormalRateLimit429(apiErr)) {
+        const waitMs = parseRetryAfter(apiErr);
+        console.warn(`[Groq] Normal 429 rate limit encountered. Waiting ${waitMs}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        try {
+          return await performGroqCall({
+            jobName,
+            groq,
+            systemPrompt,
+            userPrompt: promptText,
+            temperature,
+            maxTokens,
+            model
+          });
+        } catch (retryErr) {
+          console.error(`[Groq] Retry after 429 failed: ${retryErr.message}`);
+          throw new FriendlyBusyError();
+        }
+      }
 
-    let parsed;
+      // 3. Other provider errors (401, 404, 500, network): log full error on server only
+      console.error(`[Groq Provider Error] ${apiErr.message}`);
+      throw new FriendlyBusyError();
+    }
+  }
+
+  // --- Attempt 1 ---
+  let res1;
+  try {
+    res1 = await executeWithRetryHandling(userPrompt, initialMaxTokens, initialModel);
+  } catch (err) {
+    if (err instanceof FriendlyBusyError) throw err;
+    console.error(`[Groq] Error during ${jobName}:`, err.message);
+    throw new FriendlyBusyError();
+  }
+
+  let validationErr1 = null;
+  if (res1.isTruncated) {
+    validationErr1 = new Error('Response truncated by token limit (finish_reason: length)');
+  } else {
     try {
-      parsed = cleanAndParseJson(content);
-    } catch (parseErr) {
-      throw new Error(`Groq JSON parsing error: ${parseErr.message}`);
+      const parsed1 = cleanAndParseJson(res1.content);
+      return validator(parsed1);
+    } catch (parseOrValErr) {
+      validationErr1 = parseOrValErr;
     }
+  }
 
-    return validator(parsed);
+  // --- Attempt 2: Response was truncated or JSON/validator failed ---
+  // Retry once with a slightly higher max_tokens (never above 600)
+  const retryMaxTokens = Math.min(600, Math.max(initialMaxTokens + 75, Math.round(initialMaxTokens * 1.35)));
+  console.warn(`[Groq] ${jobName} attempt 1 failed (${validationErr1.message}). Retrying once with max_tokens=${retryMaxTokens}...`);
+
+  const retryPrompt = `${userPrompt}\n\nCRITICAL RETRY NOTICE: Your previous output failed: ${validationErr1.message}. ${retryHint || 'Output ONLY the required JSON object with exact keys and types.'}`;
+
+  let res2;
+  try {
+    res2 = await executeWithRetryHandling(retryPrompt, retryMaxTokens, initialModel);
+  } catch (err) {
+    if (err instanceof FriendlyBusyError) throw err;
+    console.error(`[Groq] Retry execution error for ${jobName}:`, err.message);
+    throw new FriendlyBusyError();
+  }
+
+  if (res2.isTruncated) {
+    console.error(`[Groq] ${jobName} retry was also truncated (finish_reason: length).`);
+    throw new FriendlyBusyError();
   }
 
   try {
-    return await executeCall(userPrompt);
-  } catch (err1) {
-    console.warn(`[Groq] Attempt 1 validation/parse failed: ${err1.message}. Retrying once with schema reminder...`);
-    try {
-      const retryPrompt = `${userPrompt}\n\nCRITICAL RETRY NOTICE: Your previous output failed validation: ${err1.message}. ${retryHint || 'Output ONLY the required JSON object with exact keys and types.'}`;
-      return await executeCall(retryPrompt);
-    } catch (err2) {
-      console.error(`[Groq] Attempt 2 also failed: ${err2.message}`);
-      throw err2;
-    }
+    const parsed2 = cleanAndParseJson(res2.content);
+    return validator(parsed2);
+  } catch (err2) {
+    console.error(`[Groq] ${jobName} retry failed validation/parse:`, err2.message);
+    throw new FriendlyBusyError();
   }
 }
 
@@ -414,7 +672,7 @@ function mockCheckKeyPoints(learnerAnswer, keyPoints) {
 /**
  * Fallback follow-up writer when no key is configured.
  */
-function mockWriteFollowupQuestion({ ideaTitle, casePrompt, learnerAnswer }) {
+function mockWriteFollowupQuestion() {
   return {
     followup_question: "When the request is sent from the user's browser, what exact step does the application take next to process that data?"
   };
@@ -431,15 +689,19 @@ async function findRecitedSentence(ideaTitle, explanationText) {
   let result = null;
   try {
     result = await callGroqWithValidation({
+      jobName: 'Job A (Recited Sentence)',
       systemPrompt,
       userPrompt,
       temperature: 0.3,
       validator: validateRecitedSentenceOutput,
+      defaultMaxTokens: 250,
+      envMaxTokensKey: 'LLM_MAX_TOKENS_A',
       retryHint: 'Ensure you output a valid JSON object with keys: recited_sentence, type, hidden_assumption.'
     });
   } catch (err) {
+    if (err instanceof FriendlyBusyError) throw err;
     console.error('[Groq] Error during findRecitedSentence:', err.message);
-    throw err;
+    throw new FriendlyBusyError();
   }
 
   if (!result) {
@@ -460,15 +722,19 @@ async function checkKeyPoints(casePrompt, caseTheme, learnerAnswer, keyPoints) {
   let result = null;
   try {
     result = await callGroqWithValidation({
+      jobName: 'Job B (Key Points)',
       systemPrompt,
       userPrompt,
       temperature: 0,
       validator: (data) => validateKeyPointsOutput(data, keyPoints),
+      defaultMaxTokens: 400,
+      envMaxTokensKey: 'LLM_MAX_TOKENS_B',
       retryHint: 'Ensure you output a valid JSON object with key "key_points" containing an array of { key_point_id, present, evidence }.'
     });
   } catch (err) {
+    if (err instanceof FriendlyBusyError) throw err;
     console.error('[Groq] Error during checkKeyPoints:', err.message);
-    throw err;
+    throw new FriendlyBusyError();
   }
 
   if (!result) {
@@ -489,15 +755,19 @@ async function writeFollowupQuestion(params, ...rest) {
   let result = null;
   try {
     result = await callGroqWithValidation({
+      jobName: 'Job C (Follow-up Writer)',
       systemPrompt,
       userPrompt,
       temperature: 0.3,
       validator: validateFollowupOutput,
+      defaultMaxTokens: 150,
+      envMaxTokensKey: 'LLM_MAX_TOKENS_C',
       retryHint: 'Ensure you output a valid JSON object with a single key "followup_question" containing one question string ending in a question mark.'
     });
   } catch (err) {
+    if (err instanceof FriendlyBusyError) throw err;
     console.error('[Groq] Error during writeFollowupQuestion:', err.message);
-    throw err;
+    throw new FriendlyBusyError();
   }
 
   if (!result) {
@@ -516,5 +786,8 @@ module.exports = {
   formatGroqError,
   validateRecitedSentenceOutput,
   validateKeyPointsOutput,
-  validateFollowupOutput
+  validateFollowupOutput,
+  FriendlyBusyError,
+  TokenBudgetQueue,
+  budgetQueue
 };
