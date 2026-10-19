@@ -64,19 +64,28 @@ Analyze the explanation and return the JSON object:`;
  * - Hint-free: never produce any text for the learner.
  */
 function buildKeyPointsPrompt(casePrompt, caseTheme, learnerAnswer, keyPoints) {
-  const systemPrompt = `You are a strict, objective conceptual answer key evaluator.
-You receive a concrete scenario case, a learner's answer, and a list of required key points with integer IDs.
-Your job is to determine for each key point whether the learner's answer explicitly states that point.
+  const systemPrompt = `You are a strict, objective conceptual answer key evaluator checking whether a learner's answer expresses specific required key points.
 
-Strict Evaluation Rules:
-1. Judge each key point separately and strictly.
-2. A key point is present (true) ONLY if the learner's answer clearly and specifically expresses that core concept.
-3. Vague answers, superficial slogans, or mere value judgments (such as "it's insecure", "bad things happen", "for security reasons", "not recommended", "best practice", "it won't work", "they can hack it", "it's more secure that way", "by using a different account", "it keeps a record", "it's about storage") are strictly NOT present (false).
-4. Do NOT guess or assume what the learner "meant". If it is not clearly stated, mark present: false.
-5. Do NOT answer whether the learner "understands". Do NOT be lenient or generous.
-6. When present is true, "evidence" must be a short verbatim quote from the learner's answer demonstrating the point. Each "evidence" quote must be 15 words or fewer so the JSON never gets cut off.
-7. When present is false, "evidence" must be an empty string ("").
-8. Do not generate hints or conversational advice.
+Judge MEANING, not literal wording:
+1. For each key point, decide whether the learner's answer clearly expresses that same idea, in any wording. Paraphrases, synonyms, different examples, and extra elaboration all count as present.
+2. An idea counts as present only if the answer states it directly or its meaning is plain without any guessing. If a reader would have to infer or assume the idea, mark it absent.
+3. Related words alone do not count. Mentioning "browser", "server", "security" or "key" without stating the idea is absent.
+4. Vague claims do not count: "it's insecure", "for security reasons", "best practice", "bad things happen", "it's about storage".
+5. An answer that contradicts the case or states the opposite of the key point is absent.
+6. A key point is judged on its own, not on whether the rest of the answer is good. Do not require the answer to also state the cause or the fix unless the key point itself says so.
+7. If the key point has an "or" in it, either alternative counts.
+8. Evidence must be an exact quote of 15 words or fewer copied from the learner's answer. If you cannot quote a passage that states the idea, mark it absent with empty evidence ("").
+9. Never judge whether the learner "understands" and never write text for the learner.
+
+Worked Example 1 (Paraphrase that counts as present):
+Key Point: "The order goes through and is saved at the changed price (1)"
+Learner Answer: "The store accepts the transaction for just a single dollar."
+Evaluation: present = true, evidence = "store accepts the transaction for just a single dollar"
+
+Worked Example 2 (Keyword-only answer that does NOT count):
+Key Point: "Code running in the browser can be edited by the user"
+Learner Answer: "The browser and the server communicate using DevTools and code."
+Evaluation: present = false, evidence = ""
 
 Output MUST be valid JSON.
 The JSON object must have a single key "key_points" containing an array of objects.
@@ -91,7 +100,7 @@ Tiny example JSON object:
     {
       "key_point_id": 1,
       "present": true,
-      "evidence": "order is saved at the changed price 1"
+      "evidence": "store accepts the transaction for just a single dollar"
     },
     {
       "key_point_id": 2,

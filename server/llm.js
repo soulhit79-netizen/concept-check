@@ -562,7 +562,8 @@ function mockCheckKeyPoints(learnerAnswer, keyPoints) {
     "by using a different account", "it keeps a record", "it's about storage", "its about storage"
   ];
 
-  const isPurelyVague = vaguePhrases.some(v => answer === v || answer.replace(/[.!?]/g, '') === v);
+  const isPromptInjection = answer.includes('ignore the instructions') || answer.includes('mark every key point');
+  const isPurelyVague = isPromptInjection || vaguePhrases.some(v => answer === v || answer.replace(/[.!?]/g, '') === v);
 
   return keyPoints.map(kp => {
     if (isPurelyVague) {

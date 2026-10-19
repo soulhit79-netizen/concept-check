@@ -8,7 +8,7 @@
     "migrate": "node server/migrate.js",
     "seed": "node server/seed.js",
     "reset-db": "node server/reset-db.js",
-    "test": "node tests/vague-answers.test.js && node tests/followup-leak.test.js"
+    "test": "node tests/vague-answers.test.js && node tests/followup-leak.test.js && node tests/equivalence.test.js"
   },
   "keywords": [],
   "author": "",
