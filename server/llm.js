@@ -673,9 +673,16 @@ function mockCheckKeyPoints(learnerAnswer, keyPoints) {
 /**
  * Fallback follow-up writer when no key is configured.
  */
-function mockWriteFollowupQuestion() {
+function mockWriteFollowupQuestion(params, ...rest) {
+  let recited = '';
+  if (typeof params === 'object' && params !== null) {
+    recited = params.recitedSentence || params.explanationText || '';
+  } else if (rest[0]) {
+    recited = rest[0];
+  }
+  const phrase = recited ? recited.slice(0, 30).trim() : 'it can be copied';
   return {
-    followup_question: "When the request is sent from the user's browser, what exact step does the application take next to process that data?"
+    followup_question: `You said "${phrase}". In this case, what happens when a user opens the page?`
   };
 }
 

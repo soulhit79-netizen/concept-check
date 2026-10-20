@@ -312,7 +312,7 @@ app.post('/api/attempts', async (req, res, next) => {
     if (!judgment.passed && !gap_id) {
       // Find the latest gap for this learner & idea
       const gapRes = await pool.query(`
-        SELECT g.id, g.recited_sentence, g.type, g.hidden_assumption, i.title as idea_title
+        SELECT g.id, g.recited_sentence, g.type, g.hidden_assumption, i.title as idea_title, e.text as explanation_text
         FROM gaps g
         JOIN explanations e ON g.explanation_id = e.id
         JOIN ideas i ON e.idea_id = i.id
@@ -336,6 +336,7 @@ app.post('/api/attempts', async (req, res, next) => {
           const followupResult = await writeFollowupQuestion({
             ideaTitle: gapInfo.idea_title,
             recitedSentence: gapInfo.recited_sentence,
+            explanationText: gapInfo.explanation_text,
             hiddenAssumption: gapInfo.hidden_assumption,
             casePrompt: caseData.prompt,
             learnerAnswer: answer_text.trim(),

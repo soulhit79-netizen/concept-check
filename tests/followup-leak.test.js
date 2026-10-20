@@ -19,7 +19,32 @@ const BANNED_PHRASES = [
   'have you thought about'
 ];
 
+const BANNED_RULE1_TECHNICAL_TERMS = [
+  'network tab',
+  'developer tools',
+  'devtools',
+  'page source',
+  'javascript file',
+  'bundle',
+  'inspect',
+  'request headers'
+];
+
 const TEST_SCENARIOS = [
+  {
+    name: 'Learner VITE_API_KEY test (Required)',
+    ideaTitle: "Why can't the key live in the browser?",
+    recitedSentence: 'it will be visible to other users and it can be copied or stolen',
+    explanationText: 'it will be visible to other users and it can be copied or stolen',
+    hiddenAssumption: 'Assumes visibility to others explains why frontend variables are not private.',
+    casePrompt: 'A developer stores their API key in a frontend environment variable called VITE_API_KEY, thinking it is hidden. Is it safe, and why or why not?',
+    learnerAnswer: 'yes it is safe',
+    presentPoints: [],
+    absentPoints: [
+      'No',
+      'Frontend variables are bundled into the code sent to the browser, so it can be read there'
+    ]
+  },
   {
     name: 'Scenario 1: Checkout total manipulation (Required)',
     ideaTitle: 'Why does a backend exist at all?',
@@ -95,11 +120,13 @@ function extractWords(text) {
   return (text.toLowerCase().match(/[a-z]{4,}/g) || []);
 }
 
-function findLeakedWords(question, absentPoints, casePrompt, learnerAnswer) {
+function findLeakedWords(question, absentPoints, casePrompt, learnerAnswer, recitedSentence, explanationText) {
   const qWords = new Set(extractWords(question));
-  const promptAndAnswerWords = new Set([
+  const allowedContextWords = new Set([
     ...extractWords(casePrompt),
-    ...extractWords(learnerAnswer)
+    ...extractWords(learnerAnswer),
+    ...extractWords(recitedSentence),
+    ...extractWords(explanationText)
   ]);
 
   const leaked = [];
@@ -107,7 +134,7 @@ function findLeakedWords(question, absentPoints, casePrompt, learnerAnswer) {
     const ptWords = extractWords(pt);
     for (const w of ptWords) {
       if (COMMON_STOP_WORDS.has(w)) continue;
-      if (promptAndAnswerWords.has(w)) continue; // Allowed context words
+      if (allowedContextWords.has(w)) continue; // Allowed context words
       if (qWords.has(w)) {
         leaked.push(w);
       }
@@ -162,14 +189,29 @@ async function runFollowupLeakTest() {
       }
 
       // 3. Check for distinctive absent key point word overlap (leakage)
-      const leakedWords = findLeakedWords(question, sc.absentPoints, sc.casePrompt, sc.learnerAnswer);
+      const leakedWords = findLeakedWords(
+        question,
+        sc.absentPoints,
+        sc.casePrompt,
+        sc.learnerAnswer,
+        sc.recitedSentence,
+        sc.explanationText
+      );
       if (leakedWords.length > 0) {
         flags.push(`Overlaps with absent key point vocabulary: [${leakedWords.join(', ')}]`);
       }
 
+      // 4. Check for Rule 1 banned technical terms not in learner's text
+      const learnerText = `${sc.recitedSentence || ''} ${sc.explanationText || ''} ${sc.learnerAnswer || ''}`.toLowerCase();
+      for (const term of BANNED_RULE1_TECHNICAL_TERMS) {
+        if (lowerQ.includes(term) && !learnerText.includes(term)) {
+          flags.push(`Contains Rule 1 banned technical term not in learner's text: "${term}"`);
+        }
+      }
+
       if (flags.length === 0) {
         passedCount++;
-        console.log('\x1b[32m[PASS]\x1b[0m Single question, no banned phrases, no key point leakage\n');
+        console.log('\x1b[32m[PASS]\x1b[0m Single question, grounded in quote, no banned phrases/terms, no key point leakage\n');
       } else {
         flagCount++;
         console.log('\x1b[33m[FLAG]\x1b[0m Issues detected:');

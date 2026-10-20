@@ -133,15 +133,17 @@ Evaluate each required key point and return the JSON object:`;
 /**
  * Prompt for Job C: Write targeted follow-up question after Case 1 failure.
  * Rules verbatim from user requirement:
- * - Ask exactly ONE question, ending in a question mark.
- * - Aim it at the point where the learner's case answer went wrong or stayed vague. Ask what exactly happens, step by step, in the learner's own scenario, or what breaks.
- * - NEVER state, hint at, or paraphrase any absent key point. NEVER explain the concept. NEVER say "think about", "consider", "remember", or "have you thought about".
- * - Do not reuse distinctive words from the absent key points' text.
- * - If the learner's answer contradicts the case (for example, claims the server rejected something the case says it saved), ask a question that makes them walk through what the server receives and what it does with it, without telling them it was wrong.
- * - Output only the JSON.
+ * 1. The follow-up may use only terms that already appear in the case text or in the learner's own explanation or answer.
+ *    It must NOT introduce new technical places, tools or artifacts such as "network tab", "developer tools", "DevTools",
+ *    "page source", "JavaScript file", "bundle", "inspect", "request headers".
+ * 2. Build the question from the learner's own recited sentence, quoting a short phrase of it, and ask where, how,
+ *    or what exactly happens in THIS case. Example shape: "You said [their phrase]. In this case, where exactly would that happen, and what would be found?"
+ * 3. Never ask a question whose answer is a single value already implied by the question.
+ * 4. Keep the rule: ONE question, no hints, no explanation.
+ * 5. Output only the JSON.
  */
 function buildFollowupPrompt(params, ...rest) {
-  let ideaTitle, recitedSentence, hiddenAssumption, casePrompt, learnerAnswer, absentKeyPoints, presentKeyPoints;
+  let ideaTitle, recitedSentence, hiddenAssumption, casePrompt, learnerAnswer, absentKeyPoints, presentKeyPoints, explanationText;
   if (typeof params === 'object' && params !== null && !Array.isArray(params)) {
     ideaTitle = params.ideaTitle;
     recitedSentence = params.recitedSentence;
@@ -150,6 +152,7 @@ function buildFollowupPrompt(params, ...rest) {
     learnerAnswer = params.learnerAnswer;
     absentKeyPoints = params.absentKeyPoints || params.absentPoints || [];
     presentKeyPoints = params.presentKeyPoints || params.presentPoints || [];
+    explanationText = params.explanationText || params.explanation;
   } else {
     ideaTitle = params;
     recitedSentence = rest[0];
@@ -158,26 +161,26 @@ function buildFollowupPrompt(params, ...rest) {
     learnerAnswer = rest[3];
     absentKeyPoints = rest[4] || [];
     presentKeyPoints = rest[5] || [];
+    explanationText = rest[6];
   }
 
   const systemPrompt = `You are an expert pedagogy guide creating a single targeted follow-up question.
 The learner explained a concept, then attempted Case 1 and failed to state one or more key points.
-Your goal is to ask ONE follow-up question that prompts them to reason mechanically about what happens step by step.
+Your goal is to ask ONE follow-up question that prompts them to reason mechanically about what happens in this specific case.
 
-Prompt rules:
-- Ask exactly ONE question, ending in a question mark.
-- Aim it at the point where the learner's case answer went wrong or stayed vague. Ask what exactly happens, step by step, in the learner's own scenario, or what breaks.
-- NEVER state, hint at, or paraphrase any absent key point. NEVER explain the concept. NEVER say "think about", "consider", "remember", or "have you thought about".
-- Do not reuse distinctive words from the absent key points' text.
-- If the learner's answer contradicts the case (for example, claims the server rejected something the case says it saved), ask a question that makes them walk through what the server receives and what it does with it, without telling them it was wrong.
-- Output only the JSON.
-
-You MUST respond with a JSON object containing exactly one key:
-- "followup_question": "<one question>"
+Strict rules:
+1. Term vocabulary constraint: The follow-up may use ONLY terms that already appear in the case text, in the learner's explanation/recited phrase, or in the learner's answer. It must NOT introduce new technical places, tools, or artifacts such as "network tab", "developer tools", "DevTools", "page source", "JavaScript file", "bundle", "inspect", "request headers" (unless that specific term is already explicitly present in the case scenario or learner's text).
+2. Grounded in recited phrase: Build the question from the learner's own recited sentence (or explanation), quoting a short phrase of it in quotation marks, and ask where, how, or what exactly happens in THIS case.
+   Example shape: "You said \\"[their phrase]\\". In this case, where exactly would that happen, and what would be found?"
+3. No implied-answer questions: Never ask a question whose answer is a single value already implied or revealed by the question itself.
+4. Exactly ONE question: Ask exactly one question ending with a question mark. No conversational filler, no extra sentences.
+5. No hints, no explanation: NEVER state, hint at, or paraphrase any absent key point. NEVER explain the concept. NEVER say "think about", "consider", "remember", or "have you thought about".
+6. Do not reuse distinctive words from the absent key points' text.
+7. Output MUST be valid JSON with a single key "followup_question".
 
 Tiny example JSON object:
 {
-  "followup_question": "When the customer sends the modified total from DevTools, what does the server do with that number before saving the order?"
+  "followup_question": "You said \\"it can be copied\\". In this case, where does the code with the environment variable travel when a user opens the page?"
 }`;
 
   const absentFormatted = (absentKeyPoints && absentKeyPoints.length > 0)
@@ -188,7 +191,9 @@ Tiny example JSON object:
     ? presentKeyPoints.map(kp => `- "${kp}"`).join('\n')
     : '(None)';
 
-  const promptAndAnswerWords = new Set((`${casePrompt} ${learnerAnswer}`).toLowerCase().match(/[a-z]{4,}/g) || []);
+  const combinedContextText = `${casePrompt} ${recitedSentence || ''} ${explanationText || ''} ${learnerAnswer || ''}`.toLowerCase();
+
+  const promptAndAnswerWords = new Set(combinedContextText.match(/[a-z]{4,}/g) || []);
   const commonWords = new Set([
     'what', 'that', 'this', 'from', 'with', 'have', 'been', 'there', 'their',
     'when', 'which', 'your', 'will', 'would', 'could', 'should', 'about', 'other',
@@ -212,19 +217,36 @@ Tiny example JSON object:
     ? `\nDistinctive words from absent points (YOU MUST NOT USE ANY OF THESE WORDS): ${forbiddenWords.join(', ')}\n`
     : '';
 
+  const technicalTerms = [
+    'network tab',
+    'developer tools',
+    'devtools',
+    'page source',
+    'javascript file',
+    'bundle',
+    'inspect',
+    'request headers'
+  ];
+  const forbiddenTechnicalTerms = technicalTerms.filter(term => !combinedContextText.includes(term));
+  const technicalWarning = forbiddenTechnicalTerms.length > 0
+    ? `\nPROHIBITED TECHNICAL TERMS (these terms do NOT appear in the case or learner text, so you MUST NOT use them): ${forbiddenTechnicalTerms.map(t => `"${t}"`).join(', ')}\n`
+    : '';
+
+  const quoteSource = recitedSentence || explanationText || '';
+
   const userPrompt = `Concept Idea:
 "${ideaTitle}"
 
-Initial Recited Sentence from explanation:
-${recitedSentence ? `"${recitedSentence}"` : '(None identified)'}
+Learner's Explanation / Recited Phrase:
+${quoteSource ? `"${quoteSource}"` : '(None identified)'}
 
 Hidden Assumption:
 ${hiddenAssumption ? `"${hiddenAssumption}"` : '(None)'}
 
-Case 1 Scenario Prompt:
+Case Scenario Prompt:
 "${casePrompt}"
 
-Learner's Case 1 Answer:
+Learner's Case Answer:
 """
 ${learnerAnswer}
 """
@@ -232,9 +254,15 @@ ${learnerAnswer}
 Key Points already PRESENT in their answer:
 ${presentFormatted}
 
-Key Points ABSENT from their answer (DO NOT state, hint at, or paraphrase these, and DO NOT reuse distinctive words from them):
+Key Points ABSENT from their answer (DO NOT state, hint at, or paraphrase these):
 ${absentFormatted}
 ${forbiddenSection}
+${technicalWarning}
+Instructions:
+- If a recited phrase / explanation is available, begin by quoting a short phrase of it in quotes: e.g. You said "[phrase]". In this case, [ask where, how, or what happens]?
+- Use ONLY terms that appear in the case scenario or learner's text. DO NOT introduce new technical artifacts (e.g. network tab, developer tools, DevTools, page source, JavaScript file, bundle, inspect, request headers).
+- Exactly ONE question ending with a question mark.
+
 Write the single targeted follow-up question and return the JSON object:`;
 
   return { systemPrompt, userPrompt };

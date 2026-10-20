@@ -48,8 +48,8 @@ async function seedDatabase(options = {}) {
 
       for (const caseItem of ideaItem.cases) {
         const caseRowRes = await client.query(
-          'SELECT id, theme FROM cases WHERE idea_id = $1 AND prompt = $2',
-          [ideaId, caseItem.prompt]
+          'SELECT id, theme, prompt FROM cases WHERE idea_id = $1 AND (prompt = $2 OR theme = $3)',
+          [ideaId, caseItem.prompt, caseItem.theme]
         );
 
         let caseId;
@@ -63,6 +63,9 @@ async function seedDatabase(options = {}) {
         } else {
           caseId = caseRowRes.rows[0].id;
           casesFound++;
+          if (caseRowRes.rows[0].prompt !== caseItem.prompt) {
+            await client.query('UPDATE cases SET prompt = $1 WHERE id = $2', [caseItem.prompt, caseId]);
+          }
           if (caseRowRes.rows[0].theme !== caseItem.theme) {
             await client.query('UPDATE cases SET theme = $1 WHERE id = $2', [caseItem.theme, caseId]);
           }
